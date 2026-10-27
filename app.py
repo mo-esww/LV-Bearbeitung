@@ -34,11 +34,24 @@ st.markdown(
     '<div class="main-title">LV-Auswertung: Fußbodenheizung</div>',
     unsafe_allow_html=True,
 )
-st.caption(
-    "Projekt: 102831 NBD Neubau Wohngebäude mit Tiefgarage | KG 420 (Titel 3.2)"
-)
+st.caption("Flexibles Tool zur automatischen Massen-Extraktion aus PDFs")
 
 st.divider()
+
+# --- SEITENLEISTE FÜR FLEXIBLE EINSTELLUNGEN ---
+with st.sidebar:
+  st.header("⚙️ Such-Einstellungen")
+  st.markdown(
+      "Hier kannst du anpassen, nach welchem Positions-Präfix gesucht werden"
+      " soll, falls das Gewerk in einem anderen LV eine andere Nummer hat."
+  )
+
+  # Flexibles Eingabefeld für das Präfix (Standard ist "3.2.")
+  target_prefix = st.text_input(
+      "Positions-Präfix (z.B. 3.2., 4.1.)",
+      value="3.2.",
+      help="Das Tool sucht nach allen Positionen, die mit diesem Kürzel beginnen.",
+  )
 
 # Datei-Upload in der Streamlit Oberfläche
 uploaded_file = st.file_uploader(
@@ -46,7 +59,7 @@ uploaded_file = st.file_uploader(
 )
 
 
-def parse_pdf_dynamic(pdf_file):
+def parse_pdf_dynamic(pdf_file, prefix):
   extracted_data = []
   with pdfplumber.open(pdf_file) as pdf:
     for page_num, page in enumerate(pdf.pages, start=1):
@@ -54,9 +67,11 @@ def parse_pdf_dynamic(pdf_file):
       if text:
         lines = text.split("\n")
         for line in lines:
-          # Suche nach Zeilen, die mit "3.2." beginnen
           stripped = line.strip()
-          if stripped.startswith("3.2.") and len(stripped.split()[0]) > 4:
+          # Dynamische Suche basierend auf dem vom Nutzer eingegebenen Präfix
+          if stripped.startswith(prefix) and len(stripped.split()[0]) > len(
+              prefix
+          ):
             parts = stripped.split()
             pos_nr = parts[0]
             kurztext = " ".join(parts[1:]) if len(parts) > 1 else stripped
@@ -73,36 +88,37 @@ def parse_pdf_dynamic(pdf_file):
 
 # --- DYNAMISCHE STEUERUNG BEI UPLOAD ---
 if uploaded_file is not None:
-  with st.spinner("Analysiere hochgeladenes Leistungsverzeichnis..."):
-    raw_data = parse_pdf_dynamic(uploaded_file)
+  with st.spinner(f"Analysiere LV nach Positionen mit '{target_prefix}'..."):
+    raw_data = parse_pdf_dynamic(uploaded_file, target_prefix)
     if raw_data:
       df = pd.DataFrame(raw_data)
       st.success(
-          f"Erfolgreich! {len(df)} Positionen aus dem neuen LV extrahiert und"
-          " aktualisiert."
+          f"Erfolgreich! {len(df)} Positionen mit Präfix '{target_prefix}'"
+          " extrahiert."
       )
     else:
       df = pd.DataFrame(
           columns=["Seite", "Positionsnummer", "Kurztext", "Menge", "ME"]
       )
       st.warning(
-          "Es wurden keine passenden Positionen mit dem Start '3.2.' im"
-          " Dokument gefunden."
+          f"Keine Positionen mit dem Präfix '{target_prefix}' im Dokument"
+          " gefunden. Prüfe das Präfix in der Seitenleiste!"
       )
 else:
-  # Wenn keine Datei hochgeladen ist oder sie gelöscht wurde -> Leere Tabelle
+  # Leere Tabelle, wenn kein LV hochgeladen wurde
   df = pd.DataFrame(
       columns=["Seite", "Positionsnummer", "Kurztext", "Menge", "ME"]
   )
   st.info(
-      "ℹ️ Bitte lade oben ein Leistungsverzeichnis (PDF) hoch, um die Tabelle"
-      " zu füllen."
+      "ℹ️ Bitte lade oben ein Leistungsverzeichnis (PDF) hoch. Passe bei Bedarf"
+      " links in der Seitenleiste das Such-Präfix an."
   )
 
-# Suche & Filter (nur aktiv wenn Daten vorhanden)
+# Suche & Filter in der Tabelle
 if not df.empty:
   search_term = st.text_input(
-      "🔍 In Positionen suchen:", placeholder="z.B. Tacker, Verteiler, Rohr..."
+      "🔍 In den Ergebnissen filtern:",
+      placeholder="z.B. Tacker, Verteiler, Rohr...",
   )
   if search_term:
     filtered_df = df[
@@ -115,7 +131,7 @@ else:
   filtered_df = df
 
 # Tabelle anzeigen
-st.subheader("📋 Massenübersicht: Fußbodenheizung")
+st.subheader("📋 Massenübersicht")
 st.dataframe(
     filtered_df,
     use_container_width=True,
@@ -129,7 +145,7 @@ st.dataframe(
     },
 )
 
-# CSV Download (nur anzeigen, wenn Daten da sind)
+# CSV Download (nur wenn Daten vorhanden sind)
 if not filtered_df.empty:
   csv_data = filtered_df.to_csv(
       sep=";", index=False, encoding="utf-8-sig"
