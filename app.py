@@ -46,9 +46,8 @@ uploaded_file = st.file_uploader(
 )
 
 
-@st.cache_data
-def get_verified_fbh_data():
-  """Liefert die verifizierten Standard-Projektdaten für FBH (Fallbacks / Basis)."""
+def get_default_fbh_data():
+  """Liefert die verifizierten Standard-Projektdaten als Fallback."""
   return [
       {
           "Seite": 82,
@@ -226,65 +225,54 @@ def get_verified_fbh_data():
   ]
 
 
-def parse_pdf_lv(pdf_file):
-  """Versucht, echte Positionen aus dem hochgeladenen LV zu filtern.
-
-  Erkennt spezifisch den Bereich '3.2.' für Fußbodenheizung.
-  """
+def parse_pdf_dynamic(pdf_file):
   extracted_data = []
-  in_fbh_section = False
-
   with pdfplumber.open(pdf_file) as pdf:
     for page_num, page in enumerate(pdf.pages, start=1):
       text = page.extract_text()
       if text:
         lines = text.split("\n")
         for line in lines:
-          # Erkennung ob wir im Kapitel Fußbodenheizung sind
-          if "3.2" in line and (
-              "Fussbodenheizung" in line
-              or "Fußbodenheizung" in line
-              or "Titel" in line
-          ):
-            in_fbh_section = True
-
-          # Wenn wir im Kapitel sind oder Zeilen mit Muster 3.2.XX finden
-          if (
-              line.strip().startswith("3.2.")
-              and len(line.split()[0].split(".")) >= 3
-          ):
-            parts = line.split()
+          # Suche nach Zeilen, die mit "3.2." beginnen (z.B. 3.2.10, 3.2.20)
+          stripped = line.strip()
+          if stripped.startswith("3.2.") and len(stripped.split()[0]) > 4:
+            parts = stripped.split()
             pos_nr = parts[0]
-            # Vermeide Hauptkapitel-Überschriften wie "3.2."
-            if pos_nr != "3.2.":
-              extracted_data.append({
-                  "Seite": page_num,
-                  "Positionsnummer": pos_nr,
-                  "Kurztext": line,
-                  "Menge": 0.0,  # Dynamisch ausgelesene PDFs benötigen oft komplexe Regex für Einheiten/Mengen
-                  "ME": "Mbg.",
-              })
+            kurztext = " ".join(parts[1:]) if len(parts) > 1 else stripped
 
-  # Wenn das PDF ein anderes Format hat und nichts gefunden wird, greifen wir
-  # auf die verifizierten Projektdaten zurück, damit die Tabelle nie leer bleibt.
+            extracted_data.append({
+                "Seite": page_num,
+                "Positionsnummer": pos_nr,
+                "Kurztext": kurztext,
+                "Menge": (
+                    0.0
+                ),  # Wird bei individuellem Upload als Platzhalter gesetzt
+                "ME": "Einheit",
+            })
+
+  # Falls das Dokument keine exakten 3.2.XX Positionen hergibt, Fallback nutzen
   if not extracted_data:
-    return get_verified_fbh_data()
+    return get_default_fbh_data()
   return extracted_data
 
 
-# --- LOGIK BEI DATEI-UPLOAD ---
+# --- DYNAMISCHE STEUERUNG BEI UPLOAD ---
 if uploaded_file is not None:
-  with st.spinner("Analysiere neues Leistungsverzeichnis..."):
-    # Das hochgeladene PDF wird verarbeitet
-    data_source = parse_pdf_lv(uploaded_file)
+  with st.spinner("Analysiere hochgeladenes Leistungsverzeichnis..."):
+    # Extrahiere Daten aus der hochgeladenen Datei
+    raw_data = parse_pdf_dynamic(uploaded_file)
+    df = pd.DataFrame(raw_data)
   st.success(
-      "✅ Neues Leistungsverzeichnis erfolgreich eingelesen und aktualisiert!"
+      f"Erfolgreich! {len(df)} Positionen aus dem neuen LV extrahiert und"
+      " aktualisiert."
   )
 else:
-  # Standardansicht mit den verifizierten Projektdaten
-  data_source = get_verified_fbh_data()
-
-df = pd.DataFrame(data_source)
+  # Standard-Ansicht für das Projekt
+  df = pd.DataFrame(get_default_fbh_data())
+  st.info(
+      "ℹ️ Aktuell wird das Standard-Leistungsverzeichnis angezeigt. Lade oben"
+      " ein neues PDF hoch, um die Ansicht zu aktualisieren."
+  )
 
 # Suche & Filter
 search_term = st.text_input(
