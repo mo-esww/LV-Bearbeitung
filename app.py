@@ -35,7 +35,7 @@ st.markdown(
     '<div class="main-title">LV-Auswertung: Fußbodenheizung</div>',
     unsafe_allow_html=True,
 )
-st.caption("Präzise & automatisierte Massen-Extraktion aus Leistungsverzeichnissen")
+st.caption("Flexibles Tool zur automatischen Massen-Extraktion aus PDFs")
 
 st.divider()
 
@@ -45,7 +45,7 @@ uploaded_file = st.file_uploader(
 )
 
 
-def parse_pdf_clean(pdf_file):
+def parse_pdf_flexible(pdf_file):
   extracted_data = []
 
   with pdfplumber.open(pdf_file) as pdf:
@@ -56,62 +56,66 @@ def parse_pdf_clean(pdf_file):
         for line in lines:
           stripped = line.strip()
 
-          # STRIKTER FILTER: Sucht nur nach echten GAEB-Positionen mit Punkten (z.B. 3.2.10, 4.1.005 etc.)
-          # Das ignoriert Postleitzahlen, Rechnungsnummern oder Jahreszahlen ohne Punkt.
-          match_pos = re.match(r"^(\d+\.\d+(?:\.\d+)+)\s+(.*)", stripped)
+          # Flexiblerer Filter: Erkennt Positionen am Anfang (z.B. 3.2, 3.2.10, 1.1 etc.)
+          # Schließt Postleitzahlen (5 Ziffern am Stück ohne Punkt) automatisch aus.
+          match_pos = re.match(
+              r"^(\d+[\.\d]*)\s+(?!DE-|[0-9]{5}\b)(.*)", stripped
+          )
           if match_pos:
             pos_nr = match_pos.group(1)
-            rest_text = match_pos.group(2)
+            # Nur Positionen mit mindestens einem Punkt oder kurzer Ziffernfolge zulassen, um Textmüll zu vermeiden
+            if "." in pos_nr or len(pos_nr) <= 3:
+              rest_text = match_pos.group(2)
 
-            # Suche nach Menge und Einheit am Ende des Textes (z.B. "4.600,00 m²" oder "38.000 m")
-            qty_match = re.search(
-                r"([\d\.,]+)\s*(m²|qm|m|Stk|stk|pausch\.?|psch)$",
-                rest_text,
-                re.IGNORECASE,
-            )
-
-            if qty_match:
-              qty_str = (
-                  qty_match.group(1).replace(".", "").replace(",", ".")
+              # Suche nach Menge und Einheit (z.B. "4.600,00 m²" oder "38000 m" oder "12 Stk")
+              qty_match = re.search(
+                  r"([\d\.,]+)\s*(m²|qm|m|Stk|stk|pausch\.?|psch|Pkg\.?)$",
+                  rest_text,
+                  re.IGNORECASE,
               )
-              try:
-                menge = float(qty_str)
-              except ValueError:
-                menge = 0.0
-              me = qty_match.group(2)
-              kurztext = rest_text[: qty_match.start()].strip()
-            else:
-              menge = 0.0
-              me = "Einheit"
-              kurztext = rest_text
 
-            extracted_data.append({
-                "Seite": page_num,
-                "Positionsnummer": pos_nr,
-                "Kurztext": kurztext,
-                "Menge": menge,
-                "ME": me,
-            })
+              if qty_match:
+                qty_str = (
+                    qty_match.group(1).replace(".", "").replace(",", ".")
+                )
+                try:
+                  menge = float(qty_str)
+                except ValueError:
+                  menge = 0.0
+                me = qty_match.group(2)
+                kurztext = rest_text[: qty_match.start()].strip()
+              else:
+                menge = 0.0
+                me = "Einheit"
+                kurztext = rest_text
+
+              extracted_data.append({
+                  "Seite": page_num,
+                  "Positionsnummer": pos_nr,
+                  "Kurztext": kurztext,
+                  "Menge": menge,
+                  "ME": me,
+              })
 
   return extracted_data
 
 
 # --- STEUERUNG BEI UPLOAD ---
 if uploaded_file is not None:
-  with st.spinner("Analysiere Leistungsverzeichnis und filtere Positionen..."):
-    raw_data = parse_pdf_clean(uploaded_file)
+  with st.spinner("Analysiere Leistungsverzeichnis flexibel..."):
+    raw_data = parse_pdf_flexible(uploaded_file)
     if raw_data:
       df = pd.DataFrame(raw_data)
       st.success(
-          f"Erfolgreich! {len(df)} saubere LV-Positionen extrahiert."
+          f"Erfolgreich! {len(df)} Positionen aus dem Dokument extrahiert."
       )
     else:
       df = pd.DataFrame(
           columns=["Seite", "Positionsnummer", "Kurztext", "Menge", "ME"]
       )
       st.warning(
-          "Es wurden keine passenden Positionen mit dem Format 'X.Y.Z' im"
-          " Dokument gefunden."
+          "Es konnten keine passenden Positionen im Dokument gefunden"
+          " werden."
       )
 else:
   df = pd.DataFrame(
