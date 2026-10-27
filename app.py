@@ -1,15 +1,19 @@
 import csv
-import sys
+import io
+import pandas as pd
+import streamlit as st
+
+# Page Configuration
+st.set_page_config(
+    page_title="LV-Auswertung | Fußbodenheizung",
+    page_icon="🔥",
+    layout="wide",
+)
 
 
-def export_fbh_massen_to_csv(output_csv_path="fussbodenheizung_massen.csv"):
-  """Filtert die Positionen für die Fußbodenheizung (Titel 3.2)
-
-  aus dem Leistungsverzeichnis und exportiert sie als CSV-Datei.
-  """
-
-  # Strukturierte Daten der Fußbodenheizungs-Positionen (KG 420, Titel 3.2)
-  fbh_daten = [
+# Datenstruktur der Fußbodenheizungs-Positionen (KG 420, Titel 3.2)
+def get_fbh_data():
+  return [
       {
           "Seite": 82,
           "Positionsnummer": "3.2.10",
@@ -185,28 +189,77 @@ def export_fbh_massen_to_csv(output_csv_path="fussbodenheizung_massen.csv"):
       },
   ]
 
-  # Schreiben der Daten in eine CSV-Datei
-  try:
-    with open(
-        output_csv_path, mode="w", newline="", encoding="utf-8-sig"
-    ) as csv_file:
-      fieldnames = ["Seite", "Positionsnummer", "Kurztext", "Menge", "ME"]
-      writer = csv.DictWriter(csv_file, fieldnames=fieldnames, delimiter=";")
 
-      writer.writeheader()
-      for row in fbh_daten:
-        writer.writerow(row)
-
-    print(
-        f"[INFO] CSV-Export erfolgreich! Datei gespeichert unter:"
-        f" '{output_csv_path}'"
-    )
-
-  except Exception as e:
-    print(f"[FEHLER] Beim Schreiben der CSV-Datei ist ein Fehler aufgetreten: {e}")
-    sys.exit(1)
+# CSV Hilfsfunktion
+def convert_df_to_csv(df):
+  output = io.StringIO()
+  # Excel-freundliches CSV Format (Semikolon getrennt)
+  df.to_csv(output, sep=";", index=False, encoding="utf-8-sig")
+  return output.getvalue().encode("utf-8-sig")
 
 
-if __name__ == "__main__":
-  print("Starte Extraktion der Fußbodenheizungs-Massen...")
-  export_fbh_massen_to_csv()
+# --- APP INTERFACE ---
+st.title("🧱 LV-Auswertung: Fußbodenheizung (KG 420)")
+st.caption(
+    "Projekt: 102831 NBD Neubau Wohngebäude mit Tiefgarage (Häuser 01-03)"
+)
+
+data = get_fbh_data()
+df = pd.DataFrame(data)
+
+# KPI Kennzahlen oben anzeigen
+col1, col2, col3, col4 = st.columns(4)
+col1.metric("Anzahl Positionen", len(df))
+col2.metric(
+    "Gesamtfläche Dämmung",
+    f"{df[df['ME']=='m²']['Menge'].sum():,.2f} m²".replace(",", "."),
+)
+col3.metric(
+    "Gesamtlänge Heizrohr",
+    f"{df[df['Positionsnummer']=='3.2.30']['Menge'].sum():,.0f} m".replace(
+        ",", "."
+    ),
+)
+col4.metric(
+    "Verteilerschränke (Gesamt)",
+    f"{int(df[df['Kurztext'].str.contains('Verteilerschrank')]['Menge'].sum())} Stk",
+)
+
+st.divider()
+
+# Suche & Filter
+search_term = st.text_input(
+    "🔍 In Positionen suchen:", placeholder="z.B. Verteiler, Thermostat..."
+)
+if search_term:
+  filtered_df = df[
+      df["Kurztext"].str.contains(search_term, case=False)
+      | df["Positionsnummer"].str.contains(search_term)
+  ]
+else:
+  filtered_df = df
+
+# Tabelle anzeigen
+st.subheader("📋 Massenübersicht")
+st.dataframe(
+    filtered_df,
+    use_container_width=True,
+    column_config={
+        "Seite": st.column_config.NumberColumn("Seite", format="%d"),
+        "Positionsnummer": st.column_config.TextColumn("Pos. Nr."),
+        "Kurztext": st.column_config.TextColumn("Beschreibung", width="large"),
+        "Menge": st.column_config.NumberColumn("Menge", format="%.2f"),
+        "ME": st.column_config.TextColumn("Einheit"),
+    },
+    hide_index=True,
+)
+
+# CSV-Download Button
+csv_data = convert_df_to_csv(filtered_df)
+st.download_button(
+    label="📥 Massen als CSV herunterladen (für Excel)",
+    data=csv_data,
+    file_name="massen_fussbodenheizung.csv",
+    mime="text/csv",
+    type="primary",
+)
