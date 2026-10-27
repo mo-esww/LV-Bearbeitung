@@ -35,7 +35,7 @@ st.markdown(
     '<div class="main-title">LV-Auswertung: Fußbodenheizung</div>',
     unsafe_allow_html=True,
 )
-st.caption("Flexibles Tool zur automatischen Massen-Extraktion aus PDFs")
+st.caption("Intelligente & keyword-basierte Massen-Extraktion für FBH-LVs")
 
 st.divider()
 
@@ -45,8 +45,28 @@ uploaded_file = st.file_uploader(
 )
 
 
-def parse_pdf_flexible(pdf_file):
+def parse_pdf_smart_keywords(pdf_file):
   extracted_data = []
+  # Typische Schlüsselwörter für Fußbodenheizung in LVs
+  fbh_keywords = [
+      "tacker",
+      "heizrohr",
+      "pe-xc",
+      "randdämmstreifen",
+      "fugenprofil",
+      "schutzrohr",
+      "verteilerschrank",
+      "heizkreisverteiler",
+      "stellantrieb",
+      "raumthermostat",
+      "regelverteiler",
+      "klemmleiste",
+      "funkheizen",
+      "dämmung",
+      "clip-platte",
+      "fussbodenheizung",
+      "fußbodenheizung",
+  ]
 
   with pdfplumber.open(pdf_file) as pdf:
     for page_num, page in enumerate(pdf.pages, start=1):
@@ -54,41 +74,47 @@ def parse_pdf_flexible(pdf_file):
       if text:
         lines = text.split("\n")
         for line in lines:
-          stripped = line.strip()
+          line_lower = line.lower()
 
-          # Flexiblerer Filter: Erkennt Positionen am Anfang (z.B. 3.2, 3.2.10, 1.1 etc.)
-          # Schließt Postleitzahlen (5 Ziffern am Stück ohne Punkt) automatisch aus.
-          match_pos = re.match(
-              r"^(\d+[\.\d]*)\s+(?!DE-|[0-9]{5}\b)(.*)", stripped
-          )
-          if match_pos:
-            pos_nr = match_pos.group(1)
-            # Nur Positionen mit mindestens einem Punkt oder kurzer Ziffernfolge zulassen, um Textmüll zu vermeiden
-            if "." in pos_nr or len(pos_nr) <= 3:
-              rest_text = match_pos.group(2)
+          # Prüfen, ob die Zeile eines der FBH-Schlüsselwörter enthält
+          if any(keyword in line_lower for keyword in fbh_keywords):
+            stripped = line.strip()
 
-              # Suche nach Menge und Einheit (z.B. "4.600,00 m²" oder "38000 m" oder "12 Stk")
-              qty_match = re.search(
-                  r"([\d\.,]+)\s*(m²|qm|m|Stk|stk|pausch\.?|psch|Pkg\.?)$",
-                  rest_text,
-                  re.IGNORECASE,
+            # Versuche, eine Positionsnummer am Anfang zu finden (z.B. "3.2.10", "4.1", "01.02")
+            pos_match = re.match(r"^([0-9\.]+)\s+(.*)", stripped)
+            if pos_match:
+              pos_nr = pos_match.group(1)
+              rest_text = pos_match.group(2)
+            else:
+              pos_nr = "FBH-Pos."
+              rest_text = stripped
+
+            # Suche nach Menge und Einheit in der Zeile (z.B. "4.600,00 m²" oder "38000 m")
+            qty_match = re.search(
+                r"([\d\.,]+)\s*(m²|qm|m|Stk|stk|pausch\.?|psch|Pkg\.?)$",
+                rest_text,
+                re.IGNORECASE,
+            )
+
+            if qty_match:
+              qty_str = (
+                  qty_match.group(1).replace(".", "").replace(",", ".")
               )
-
-              if qty_match:
-                qty_str = (
-                    qty_match.group(1).replace(".", "").replace(",", ".")
-                )
-                try:
-                  menge = float(qty_str)
-                except ValueError:
-                  menge = 0.0
-                me = qty_match.group(2)
-                kurztext = rest_text[: qty_match.start()].strip()
-              else:
+              try:
+                menge = float(qty_str)
+              except ValueError:
                 menge = 0.0
-                me = "Einheit"
-                kurztext = rest_text
+              me = qty_match.group(2)
+              kurztext = rest_text[: qty_match.start()].strip()
+            else:
+              menge = 0.0
+              me = "Einheit"
+              kurztext = rest_text
 
+            # Duplikate vermeiden
+            if not any(
+                d["Kurztext"] == kurztext for d in extracted_data
+            ) and len(kurztext) > 5:
               extracted_data.append({
                   "Seite": page_num,
                   "Positionsnummer": pos_nr,
@@ -102,27 +128,27 @@ def parse_pdf_flexible(pdf_file):
 
 # --- STEUERUNG BEI UPLOAD ---
 if uploaded_file is not None:
-  with st.spinner("Analysiere Leistungsverzeichnis flexibel..."):
-    raw_data = parse_pdf_flexible(uploaded_file)
+  with st.spinner("Analysiere LV und filtere relevante FBH-Positionen..."):
+    raw_data = parse_pdf_smart_keywords(uploaded_file)
     if raw_data:
       df = pd.DataFrame(raw_data)
       st.success(
-          f"Erfolgreich! {len(df)} Positionen aus dem Dokument extrahiert."
+          f"Erfolgreich! {len(df)} Fußbodenheizungs-Positionen intelligent"
+          " extrahiert."
       )
     else:
       df = pd.DataFrame(
           columns=["Seite", "Positionsnummer", "Kurztext", "Menge", "ME"]
       )
       st.warning(
-          "Es konnten keine passenden Positionen im Dokument gefunden"
-          " werden."
+          "Es wurden keine passenden FBH-Positionen im Dokument gefunden."
       )
 else:
   df = pd.DataFrame(
       columns=["Seite", "Positionsnummer", "Kurztext", "Menge", "ME"]
   )
   st.info(
-      "ℹ️ Bitte lade oben ein Leistungsverzeichnis (PDF) hoch, um die"
+      "ℹ️ Bitte lade oben dein Leistungsverzeichnis (PDF) hoch, um die"
       " Auswertung zu starten."
   )
 
