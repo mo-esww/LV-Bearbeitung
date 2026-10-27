@@ -35,7 +35,9 @@ st.markdown(
     '<div class="main-title">LV-Auswertung: Fußbodenheizung</div>',
     unsafe_allow_html=True,
 )
-st.caption("Intelligente & keyword-basierte Massen-Extraktion für FBH-LVs")
+st.caption(
+    "Intelligente Massen-Extraktion mit automatischer Mengenerkennung aus PDFs"
+)
 
 st.divider()
 
@@ -45,9 +47,8 @@ uploaded_file = st.file_uploader(
 )
 
 
-def parse_pdf_smart_keywords(pdf_file):
+def parse_pdf_with_smart_quantities(pdf_file):
   extracted_data = []
-  # Typische Schlüsselwörter für Fußbodenheizung in LVs
   fbh_keywords = [
       "tacker",
       "heizrohr",
@@ -61,7 +62,6 @@ def parse_pdf_smart_keywords(pdf_file):
       "raumthermostat",
       "regelverteiler",
       "klemmleiste",
-      "funkheizen",
       "dämmung",
       "clip-platte",
       "fussbodenheizung",
@@ -76,22 +76,22 @@ def parse_pdf_smart_keywords(pdf_file):
         for line in lines:
           line_lower = line.lower()
 
-          # Prüfen, ob die Zeile eines der FBH-Schlüsselwörter enthält
           if any(keyword in line_lower for keyword in fbh_keywords):
             stripped = line.strip()
 
-            # Versuche, eine Positionsnummer am Anfang zu finden (z.B. "3.2.10", "4.1", "01.02")
+            # Positionsnummer am Anfang suchen
             pos_match = re.match(r"^([0-9\.]+)\s+(.*)", stripped)
             if pos_match:
               pos_nr = pos_match.group(1)
               rest_text = pos_match.group(2)
             else:
-              pos_nr = "FBH-Pos."
+              pos_nr = "3.2.X"
               rest_text = stripped
 
-            # Suche nach Menge und Einheit in der Zeile (z.B. "4.600,00 m²" oder "38000 m")
+            # FLEXIBLE MENGEN-ERKENNUNG:
+            # Sucht im Text nach einer Zahl (mit Tausenderpunkten/Dezimal komma) gefolgt von einer Einheit
             qty_match = re.search(
-                r"([\d\.,]+)\s*(m²|qm|m|Stk|stk|pausch\.?|psch|Pkg\.?)$",
+                r"(\d{1,3}(?:\.\d{3})*(?:,\d+)?|\d+(?:,\d+)?)\s*(m²|qm|m|Stk|Stück|stk|pausch\.?|psch|Pkg\.?)",
                 rest_text,
                 re.IGNORECASE,
             )
@@ -105,16 +105,19 @@ def parse_pdf_smart_keywords(pdf_file):
               except ValueError:
                 menge = 0.0
               me = qty_match.group(2)
+              # Text vor der gefundenen Menge als Beschreibung nutzen
               kurztext = rest_text[: qty_match.start()].strip()
             else:
               menge = 0.0
               me = "Einheit"
               kurztext = rest_text
 
-            # Duplikate vermeiden
+            # Bereinigung des Kurztexts (unnötige Bindestriche oder überflüssige Reste entfernen)
+            kurztext = re.sub(r"[\.,\-]+$", "", kurztext).strip()
+
             if not any(
                 d["Kurztext"] == kurztext for d in extracted_data
-            ) and len(kurztext) > 5:
+            ) and len(kurztext) > 4:
               extracted_data.append({
                   "Seite": page_num,
                   "Positionsnummer": pos_nr,
@@ -128,27 +131,24 @@ def parse_pdf_smart_keywords(pdf_file):
 
 # --- STEUERUNG BEI UPLOAD ---
 if uploaded_file is not None:
-  with st.spinner("Analysiere LV und filtere relevante FBH-Positionen..."):
-    raw_data = parse_pdf_smart_keywords(uploaded_file)
+  with st.spinner("Analysiere LV und extrahiere Positionen inklusive Massen..."):
+    raw_data = parse_pdf_with_smart_quantities(uploaded_file)
     if raw_data:
       df = pd.DataFrame(raw_data)
       st.success(
-          f"Erfolgreich! {len(df)} Fußbodenheizungs-Positionen intelligent"
-          " extrahiert."
+          f"Erfolgreich! {len(df)} Positionen mit erkannten Massen extrahiert."
       )
     else:
       df = pd.DataFrame(
           columns=["Seite", "Positionsnummer", "Kurztext", "Menge", "ME"]
       )
-      st.warning(
-          "Es wurden keine passenden FBH-Positionen im Dokument gefunden."
-      )
+      st.warning("Es konnten keine passenden Positionen ermittelt werden.")
 else:
   df = pd.DataFrame(
       columns=["Seite", "Positionsnummer", "Kurztext", "Menge", "ME"]
   )
   st.info(
-      "ℹ️ Bitte lade oben dein Leistungsverzeichnis (PDF) hoch, um die"
+      "ℹ️ Bitte lade oben ein Leistungsverzeichnis (PDF) hoch, um die"
       " Auswertung zu starten."
   )
 
