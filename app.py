@@ -1,4 +1,5 @@
 import io
+import re
 import pandas as pd
 import pdfplumber
 import streamlit as st
@@ -34,24 +35,9 @@ st.markdown(
     '<div class="main-title">LV-Auswertung: Fußbodenheizung</div>',
     unsafe_allow_html=True,
 )
-st.caption("Flexibles Tool zur automatischen Massen-Extraktion aus PDFs")
+st.caption("Automatisches Erkennen & Extrahieren von Fußbodenheizungs-Massen")
 
 st.divider()
-
-# --- SEITENLEISTE FÜR FLEXIBLE EINSTELLUNGEN ---
-with st.sidebar:
-  st.header("⚙️ Such-Einstellungen")
-  st.markdown(
-      "Hier kannst du anpassen, nach welchem Positions-Präfix gesucht werden"
-      " soll, falls das Gewerk in einem anderen LV eine andere Nummer hat."
-  )
-
-  # Flexibles Eingabefeld für das Präfix (Standard ist "3.2.")
-  target_prefix = st.text_input(
-      "Positions-Präfix (z.B. 3.2., 4.1.)",
-      value="3.2.",
-      help="Das Tool sucht nach allen Positionen, die mit diesem Kürzel beginnen.",
-  )
 
 # Datei-Upload in der Streamlit Oberfläche
 uploaded_file = st.file_uploader(
@@ -59,59 +45,89 @@ uploaded_file = st.file_uploader(
 )
 
 
-def parse_pdf_dynamic(pdf_file, prefix):
+def parse_pdf_automatically(pdf_file):
   extracted_data = []
+  detected_prefix = None
+
   with pdfplumber.open(pdf_file) as pdf:
+    # Schritt 1: Automatische Suche nach dem Kapitel "Fußbodenheizung" im gesamten Dokument
+    for page in pdf.pages:
+      text = page.extract_text()
+      if text:
+        for line in text.split("\n"):
+          if "fussbodenheizung" in line.lower() or "fußbodenheizung" in line.lower():
+            # Suche nach einer Nummer am Anfang der Zeile oder im Text (z.B. "3.2", "4.1.2")
+            match = re.search(r"\b(\d+[\.\d]+)\b", line)
+            if match:
+              potential_prefix = match.group(1)
+              # Wir wollen keine zu langen oder zu kurzen Ziffernfolgen als Präfix
+              if len(potential_prefix) >= 2:
+                detected_prefix = potential_prefix
+                break
+      if detected_prefix:
+        break
+
+    # Falls kein exaktes Kapitel gefunden wurde, nehmen wir einen intelligenten Standard-Fallback an
+    if not detected_prefix:
+      detected_prefix = "3.2"
+
+    st.sidebar.success(
+        f"🔍 Erkanntes Kapitel-Präfix: **{detected_prefix}**"
+    )
+
+    # Schritt 2: Alle Positionen mit diesem Präfix automatisch extrahieren
     for page_num, page in enumerate(pdf.pages, start=1):
       text = page.extract_text()
       if text:
-        lines = text.split("\n")
-        for line in lines:
+        for line in text.split("\n"):
           stripped = line.strip()
-          # Dynamische Suche basierend auf dem vom Nutzer eingegebenen Präfix
-          if stripped.startswith(prefix) and len(stripped.split()[0]) > len(
-              prefix
-          ):
+          # Prüft, ob die Zeile mit dem gefundenen Präfix beginnt (z.B. "3.2.10" oder "3.2.")
+          if stripped.startswith(detected_prefix) and len(
+              stripped.split()[0]
+          ) > len(detected_prefix):
             parts = stripped.split()
             pos_nr = parts[0]
-            kurztext = " ".join(parts[1:]) if len(parts) > 1 else stripped
+            if pos_nr != detected_prefix and pos_nr != detected_prefix + ".":
+              kurztext = " ".join(parts[1:]) if len(parts) > 1 else stripped
 
-            extracted_data.append({
-                "Seite": page_num,
-                "Positionsnummer": pos_nr,
-                "Kurztext": kurztext,
-                "Menge": 0.0,
-                "ME": "Einheit",
-            })
-  return extracted_data
+              extracted_data.append({
+                  "Seite": page_num,
+                  "Positionsnummer": pos_nr,
+                  "Kurztext": kurztext,
+                  "Menge": 0.0,
+                  "ME": "Einheit",
+              })
+
+  return extracted_data, detected_prefix
 
 
 # --- DYNAMISCHE STEUERUNG BEI UPLOAD ---
 if uploaded_file is not None:
-  with st.spinner(f"Analysiere LV nach Positionen mit '{target_prefix}'..."):
-    raw_data = parse_pdf_dynamic(uploaded_file, target_prefix)
+  with st.spinner(
+      "Analysiere LV und erkenne Fußbodenheizungs-Positionen automatisch..."
+  ):
+    raw_data, prefix_found = parse_pdf_automatically(uploaded_file)
     if raw_data:
       df = pd.DataFrame(raw_data)
       st.success(
-          f"Erfolgreich! {len(df)} Positionen mit Präfix '{target_prefix}'"
-          " extrahiert."
+          f"Erfolgreich! {len(df)} Positionen anhand des erkannten Präfix"
+          f" '{prefix_found}' extrahiert."
       )
     else:
       df = pd.DataFrame(
           columns=["Seite", "Positionsnummer", "Kurztext", "Menge", "ME"]
       )
       st.warning(
-          f"Keine Positionen mit dem Präfix '{target_prefix}' im Dokument"
-          " gefunden. Prüfe das Präfix in der Seitenleiste!"
+          "Es konnten keine passenden Positionen automatisch ermittelt"
+          " werden."
       )
 else:
-  # Leere Tabelle, wenn kein LV hochgeladen wurde
   df = pd.DataFrame(
       columns=["Seite", "Positionsnummer", "Kurztext", "Menge", "ME"]
   )
   st.info(
-      "ℹ️ Bitte lade oben ein Leistungsverzeichnis (PDF) hoch. Passe bei Bedarf"
-      " links in der Seitenleiste das Such-Präfix an."
+      "ℹ️ Bitte lade oben ein Leistungsverzeichnis (PDF) hoch. Das Tool"
+      " erkennt die Positionen für Fußbodenheizung danach vollautomatisch."
   )
 
 # Suche & Filter in der Tabelle
@@ -145,7 +161,7 @@ st.dataframe(
     },
 )
 
-# CSV Download (nur wenn Daten vorhanden sind)
+# CSV Download
 if not filtered_df.empty:
   csv_data = filtered_df.to_csv(
       sep=";", index=False, encoding="utf-8-sig"
