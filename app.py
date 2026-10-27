@@ -35,7 +35,7 @@ st.markdown(
     '<div class="main-title">LV-Auswertung: Fußbodenheizung</div>',
     unsafe_allow_html=True,
 )
-st.caption("Flexibles Tool zur automatischen Massen-Extraktion aus PDFs")
+st.caption("Präzise & automatisierte Massen-Extraktion aus Leistungsverzeichnissen")
 
 st.divider()
 
@@ -45,7 +45,7 @@ uploaded_file = st.file_uploader(
 )
 
 
-def parse_pdf_with_auto_quantities(pdf_file):
+def parse_pdf_clean(pdf_file):
   extracted_data = []
 
   with pdfplumber.open(pdf_file) as pdf:
@@ -56,13 +56,14 @@ def parse_pdf_with_auto_quantities(pdf_file):
         for line in lines:
           stripped = line.strip()
 
-          # Sucht nach Zeilen, die mit einer Positionsnummer beginnen (z.B. 3.2.10, 4.1.20 etc.)
-          match_pos = re.match(r"^(\d+[\.\d]+\d+)\s+(.*)", stripped)
+          # STRIKTER FILTER: Sucht nur nach echten GAEB-Positionen mit Punkten (z.B. 3.2.10, 4.1.005 etc.)
+          # Das ignoriert Postleitzahlen, Rechnungsnummern oder Jahreszahlen ohne Punkt.
+          match_pos = re.match(r"^(\d+\.\d+(?:\.\d+)+)\s+(.*)", stripped)
           if match_pos:
             pos_nr = match_pos.group(1)
             rest_text = match_pos.group(2)
 
-            # Versucht Menge und Einheit am Ende oder im Text zu finden (z.B. "4600 m²" oder "38000 m")
+            # Suche nach Menge und Einheit am Ende des Textes (z.B. "4.600,00 m²" oder "38.000 m")
             qty_match = re.search(
                 r"([\d\.,]+)\s*(m²|qm|m|Stk|stk|pausch\.?|psch)$",
                 rest_text,
@@ -70,7 +71,6 @@ def parse_pdf_with_auto_quantities(pdf_file):
             )
 
             if qty_match:
-              # Mengenformat bereinigen (Deutsche Schreibweise in Float umwandeln)
               qty_str = (
                   qty_match.group(1).replace(".", "").replace(",", ".")
               )
@@ -82,7 +82,7 @@ def parse_pdf_with_auto_quantities(pdf_file):
               kurztext = rest_text[: qty_match.start()].strip()
             else:
               menge = 0.0
-              me = "Stk / Einheit"
+              me = "Einheit"
               kurztext = rest_text
 
             extracted_data.append({
@@ -96,33 +96,30 @@ def parse_pdf_with_auto_quantities(pdf_file):
   return extracted_data
 
 
-# --- DYNAMISCHE STEUERUNG BEI UPLOAD ---
+# --- STEUERUNG BEI UPLOAD ---
 if uploaded_file is not None:
-  with st.spinner(
-      "Analysiere LV und extrahiere Positionen inklusive Massen..."
-  ):
-    raw_data = parse_pdf_with_auto_quantities(uploaded_file)
+  with st.spinner("Analysiere Leistungsverzeichnis und filtere Positionen..."):
+    raw_data = parse_pdf_clean(uploaded_file)
     if raw_data:
       df = pd.DataFrame(raw_data)
       st.success(
-          f"Erfolgreich! {len(df)} Positionen mit automatischen Massen"
-          " extrahiert."
+          f"Erfolgreich! {len(df)} saubere LV-Positionen extrahiert."
       )
     else:
       df = pd.DataFrame(
           columns=["Seite", "Positionsnummer", "Kurztext", "Menge", "ME"]
       )
       st.warning(
-          "Es konnten keine Positionen mit Mengen im Dokument gefunden"
-          " werden."
+          "Es wurden keine passenden Positionen mit dem Format 'X.Y.Z' im"
+          " Dokument gefunden."
       )
 else:
   df = pd.DataFrame(
       columns=["Seite", "Positionsnummer", "Kurztext", "Menge", "ME"]
   )
   st.info(
-      "ℹ️ Bitte lade oben ein Leistungsverzeichnis (PDF) hoch. Die Massen"
-      " werden dann dynamisch ausgelesen."
+      "ℹ️ Bitte lade oben ein Leistungsverzeichnis (PDF) hoch, um die"
+      " Auswertung zu starten."
   )
 
 # Suche & Filter in der Tabelle
@@ -145,7 +142,7 @@ else:
 st.subheader("📋 Massenübersicht")
 st.dataframe(
     filtered_df,
-    use_container_width=Width if "Width" in locals() else True,
+    use_container_width=True,
     hide_index=True,
     column_config={
         "Seite": st.column_config.NumberColumn("Seite", format="%d"),
